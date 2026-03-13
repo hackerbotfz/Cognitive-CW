@@ -1,0 +1,65 @@
+amcl:
+  ros__parameters:
+    use_sim_time: True
+
+    # Configuration 1: Few Particles
+    #min_particles: 200
+    #max_particles: 500
+
+    # Configuration 2: Baseline
+    min_particles: 500
+    max_particles: 2000
+
+    # Configuration 3: Many Particles
+    #min_particles: 2000
+    #max_particles: 5000
+
+    # Odometry model parameters (for differential drive)
+    odom_model_type: "diff"
+    odom_alpha1: 0.2  # Rotation noise from rotation
+    odom_alpha2: 0.2  # Rotation noise from translation
+    odom_alpha3: 0.2  # Translation noise from translation
+    odom_alpha4: 0.2  # Translation noise from rotation
+    odom_alpha5: 0.1  # Strafe noise (not applicable for diff drive)
+
+    # Laser model parameters
+    laser_model_type: "likelihood_field"
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 12.0
+    laser_min_range: 0.1
+
+    # Update parameters
+    # update_min_d is the minimum translation before update (metres)
+    # update_min_a is the minimum rotation before update (radians)
+
+    # Baseline Updates
+    update_min_d: 0.25 # updates every 25cm
+    update_min_a: 0.2 # updates every ~12 degrees
+
+    # Aggressive Updates
+    #update_min_d: 0.1 # updates every 10cm
+    #update_min_a: 0.1 # updates every ~6 degrees
+
+    # Conservative Updates
+    #update_min_d: 0.5 # updates every 50cm
+    #update_min_a: 0.5 # updates every ~29 degrees
+
+    resample_interval: 1  # Resample every n updates
+
+    # Transform parameters
+    transform_tolerance: 1.0  # Transform timeout (seconds)
+
+    # Initial pose parameters
+    set_initial_pose: false
+    initial_pose_x: 0.0
+    initial_pose_y: 0.0
+    initial_pose_a: 0.0
+
+    # Frame IDs
+    global_frame_id: "map"
+    odom_frame_id: "odom"
+    base_frame_id: "base_link"
+
+    # Recovery parameters
+    recovery_alpha_slow: 0.0
+    recovery_alpha_fast: 0.0
