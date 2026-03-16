@@ -1,0 +1,3 @@
+source;share/ntu_robotsim/environment/ament_prefix_path.sh
+source;share/ntu_robotsim/environment/path.sh
+source;share/ntu_robotsim/environment/gz_sim_resource_path.dsv

@@ -1,0 +1,8 @@
+source;share/ntu_robotsim/hook/cmake_prefix_path.ps1
+source;share/ntu_robotsim/hook/cmake_prefix_path.dsv
+source;share/ntu_robotsim/hook/cmake_prefix_path.sh
+source;share/ntu_robotsim/local_setup.bash
+source;share/ntu_robotsim/local_setup.dsv
+source;share/ntu_robotsim/local_setup.ps1
+source;share/ntu_robotsim/local_setup.sh
+source;share/ntu_robotsim/local_setup.zsh
