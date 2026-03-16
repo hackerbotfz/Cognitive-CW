@@ -1,0 +1,45 @@
+<?xml version="1.0"?>
+<robot name="jetbot">
+  
+  <!-- Base link -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="0.398 0.268 0.16"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <!-- Laser link -->
+  <link name="base_laser">
+    <visual>
+      <geometry>
+        <cylinder radius="0.03" length="0.04"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <!-- Static transform: base_link => base_laser -->
+  <joint name="base_to_laser" type="fixed">
+    <parent link="base_link"/>
+    <child link="base_laser"/>
+    <origin xyz="0.0 0.0 0.28" rpy="0 0 0"/>
+  </joint>
+
+  <!-- Camera link -->
+  <link name="camera_link">
+    <visual>
+      <geometry>
+        <box size="0.02 0.02 0.02"/>
+      </geometry>
+    </visual>
+  </link>
+
+  <!-- Static transform: base_link => camera_link -->
+  <joint name="base_to_camera" type="fixed">
+    <parent link="base_link"/>
+    <child link="camera_link"/>
+    <origin xyz="0.1 0.0 0.19" rpy="0 0 0"/>
+  </joint>
+
+</robot>
