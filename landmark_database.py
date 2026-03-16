@@ -44,7 +44,7 @@ class LandmarkDatabase(Node):
             try:
                 with open(self.db_file, 'r') as f:
                     self.landmarks = json.load(f)
-                self.get_logger().info(f'Loaded {len(self.landmarks)} landmarks from database.')
+                self.get_logger().info(f'Loaded {len(self.landmarks)} landmarks from Json.')
             except Exception as e:
                 self.get_logger().error(f'Failed to load database: {str(e)}')
 
