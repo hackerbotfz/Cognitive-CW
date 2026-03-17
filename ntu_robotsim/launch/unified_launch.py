@@ -17,7 +17,7 @@ def generate_launch_description():
 		)
 	)
 
-	jetbot = IncludeLaunchDescription(
+	atlas = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'single_robot_sim.launch.py')
 		)
@@ -35,6 +35,12 @@ def generate_launch_description():
 		arguments = ["0", "0", "0", "0", "0", "0", "map", "odom"]
 	)
 
+	octomap = IncludeLaunchDescription(
+		PythonLaunchDescriptionSource(
+			os.path.join(ntu_sim_dir, 'launch', 'octomap.launch.py')
+		)
+	)
+
 	nav2 = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'nav2.launch.py')
@@ -47,11 +53,31 @@ def generate_launch_description():
 		)
 	)
 
+	visual_odometry = Node(
+		package = "ntu_robotsim",
+		executable = "visual_odometry.py",
+		name = "visual_odometry",
+		prefix='xterm -e',
+		output = "screen"
+	)
+
+	teleop = Node(
+		package='teleop_twist_keyboard',
+		executable='teleop_twist_keyboard',
+		name='teleop_twist_keyboard',
+		prefix='xterm -e',
+		output='screen',
+		remappings=[('cmd_vel', 'atlas/cmd_vel')]
+	)
+
 	return LaunchDescription([
 		maze,
-		jetbot,
+		atlas,
 		odom_to_tf,
 		map_transformer,
+		octomap,
 		nav2,
-		rviz
+		rviz,
+		teleop,
+		visual_odometry
 	])
