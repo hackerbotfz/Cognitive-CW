@@ -296,9 +296,9 @@ class VisualOdometry(Node):
         odom_msg.header.frame_id = self.base_frame_id
         odom_msg.child_frame_id = self.child_frame_id
 
-        odom_msg.pose.pose.position.x = float(self.cur_t[0, 0])
-        odom_msg.pose.pose.position.y = float(self.cur_t[1, 0])
-        odom_msg.pose.pose.position.z = float(self.cur_t[2, 0])
+        odom_msg.pose.pose.position.x = float(self.cur_t[2, 0])
+        odom_msg.pose.pose.position.y = float(self.cur_t[0, 0])
+        odom_msg.pose.pose.position.z = float(self.cur_t[1, 0])
 
         q = self.rotation_matrix_to_quaternion(self.cur_R)
         odom_msg.pose.pose.orientation.w = q[0]
