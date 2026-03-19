@@ -210,7 +210,7 @@ class VisualOdometry(Node):
         p = self.latest_cloud_xyz[vi, ui]
         if not np.isfinite(p).all():
             return None
-        # camera frame: x right, y down, z forward (typical)
+
         z = float(p[2])
         if z < self.min_depth_m or z > self.max_depth_m:
             return None
@@ -279,8 +279,7 @@ class VisualOdometry(Node):
             self.publish_odometry(msg.header.stamp)
             return
 
-        # Build 3D-2D correspondences from CURRENT organized point cloud:
-        # current image keypoint -> 3D point from cloud, matched to previous 2D keypoint.
+
         obj_points = []
         img_points = []
         for m in good_matches:
@@ -325,8 +324,7 @@ class VisualOdometry(Node):
 
         R_prev_curr, _ = cv2.Rodrigues(rvec)
         t_prev_curr = tvec.reshape(3, 1)
-
-        # Gate unrealistic jumps (metric now, so we can gate by distance)
+        
         dt = 0.0 if self.prev_stamp_sec is None else max(0.0, stamp_sec - self.prev_stamp_sec)
         dt = min(dt, self.max_dt_sec)
         trans_norm = float(np.linalg.norm(t_prev_curr))
@@ -338,8 +336,6 @@ class VisualOdometry(Node):
                 self.publish_odometry(msg.header.stamp)
                 return
 
-        # Compose global pose. PnP gives transform current->previous in this setup.
-        # Convert to previous->current for forward integration.
         R = R_prev_curr.T
         t = -R @ t_prev_curr
 
@@ -365,17 +361,21 @@ class VisualOdometry(Node):
         odom_msg.header.stamp = timestamp
         odom_msg.header.frame_id = self.base_frame_id
         odom_msg.child_frame_id = self.child_frame_id
+        
+        cv_x = float(self.cur_t[0, 0])
+        cv_y = float(self.cur_t[1, 0])
+        cv_z = float(self.cur_t[2, 0])
 
-        # Keep camera/world axes directly (avoid ad-hoc remap that caused skew/drift in map)
-        odom_msg.pose.pose.position.x = float(self.cur_t[0, 0])
-        odom_msg.pose.pose.position.y = float(self.cur_t[1, 0])
-        odom_msg.pose.pose.position.z = float(self.cur_t[2, 0])
+        odom_msg.pose.pose.position.x = cv_z
+        odom_msg.pose.pose.position.y = -cv_x
+        odom_msg.pose.pose.position.z = -cv_y
 
-        q = self.rotation_matrix_to_quaternion(self.cur_R)
-        odom_msg.pose.pose.orientation.w = q[0]
-        odom_msg.pose.pose.orientation.x = q[1]
-        odom_msg.pose.pose.orientation.y = q[2]
-        odom_msg.pose.pose.orientation.z = q[3]
+        q_cv = self.rotation_matrix_to_quaternion(self.cur_R)
+        
+        odom_msg.pose.pose.orientation.w = q_cv[0]
+        odom_msg.pose.pose.orientation.x = q_cv[3]   # ROS X = CV Z
+        odom_msg.pose.pose.orientation.y = -q_cv[1]  # ROS Y = -CV X
+        odom_msg.pose.pose.orientation.z = -q_cv[2]  # ROS Z = -CV Y
 
         self.odom_pub.publish(odom_msg)
 
