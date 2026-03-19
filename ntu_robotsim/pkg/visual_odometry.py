@@ -361,7 +361,7 @@ class VisualOdometry(Node):
         odom_msg.header.stamp = timestamp
         odom_msg.header.frame_id = self.base_frame_id
         odom_msg.child_frame_id = self.child_frame_id
-        
+
         cv_x = float(self.cur_t[0, 0])
         cv_y = float(self.cur_t[1, 0])
         cv_z = float(self.cur_t[2, 0])
@@ -371,11 +371,10 @@ class VisualOdometry(Node):
         odom_msg.pose.pose.position.z = -cv_y
 
         q_cv = self.rotation_matrix_to_quaternion(self.cur_R)
-        
         odom_msg.pose.pose.orientation.w = q_cv[0]
-        odom_msg.pose.pose.orientation.x = q_cv[3]   # ROS X = CV Z
-        odom_msg.pose.pose.orientation.y = -q_cv[1]  # ROS Y = -CV X
-        odom_msg.pose.pose.orientation.z = -q_cv[2]  # ROS Z = -CV Y
+        odom_msg.pose.pose.orientation.x = q_cv[3]
+        odom_msg.pose.pose.orientation.y = -q_cv[1]
+        odom_msg.pose.pose.orientation.z = -q_cv[2]
 
         self.odom_pub.publish(odom_msg)
 
