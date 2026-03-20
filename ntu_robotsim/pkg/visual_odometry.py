@@ -4,10 +4,13 @@ import numpy as np
 import cv2
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, CameraInfo, Odometry
+from sensor_msgs.msg import Image, CameraInfo
+from nav_msgs.msg import Odometry
+from geometry_msgs.msg import TransformStamped
 from cv_bridge import CvBridge
 import message_filters
 from scipy.spatial.transform import Rotation as R
+from tf2_ros import TransformBroadcaster
 
 class RobustVisualOdometry(Node):
     def __init__(self):
@@ -32,7 +35,13 @@ class RobustVisualOdometry(Node):
         self.info_sub = self.create_subscription(
             CameraInfo, self.get_parameter('camera_info_topic').value, self.info_callback, 10
         )
+        
         self.odom_pub = self.create_publisher(Odometry, '/atlas/visual_odom', 10)
+        
+        self.tf_broadcaster = TransformBroadcaster(self)
+
+        # --- FIX 2: Initialize the TF Broadcaster ---
+        self.tf_broadcaster = TransformBroadcaster(self)
 
         self.K = None
         self.prev_gray = None
@@ -43,7 +52,7 @@ class RobustVisualOdometry(Node):
         self.cur_R = np.eye(3)
         self.cur_t = np.zeros((3, 1))
         
-        self.alpha = 0.85
+        # self.alpha = 0.85  <-- Removed to fix metric scale drift
 
         self.orb = cv2.ORB_create(nfeatures=2000)
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
@@ -123,7 +132,8 @@ class RobustVisualOdometry(Node):
             self._handle_failure("Motion jump exceeds physical limits")
             return
 
-        self.cur_t += (self.cur_R @ t_rel) * self.alpha
+        # --- FIX 3: Removed the alpha multiplier to prevent under-reporting distance ---
+        self.cur_t += (self.cur_R @ t_rel)
         self.cur_R = self.cur_R @ R_rel
         
         self.publish_odom(stamp)
@@ -154,8 +164,35 @@ class RobustVisualOdometry(Node):
         msg.pose.pose.orientation.z = float(-q[1])
         msg.pose.pose.orientation.w = float(q[3])
 
-        msg.pose.covariance = [0.01] * 36
+        # --- FIX 1: Proper diagonal covariance matrix ---
+        covariance = [0.0] * 36
+        covariance[0]  = 0.01  # x
+        covariance[7]  = 0.01  # y
+        covariance[14] = 0.01  # z
+        covariance[21] = 0.01  # roll
+        covariance[28] = 0.01  # pitch
+        covariance[35] = 0.01  # yaw
+        msg.pose.covariance = covariance
+        
         self.odom_pub.publish(msg)
+
+        # --- FIX 2: Broadcast the TF ---
+        t = TransformStamped()
+        t.header.stamp = stamp
+        t.header.frame_id = self.get_parameter('odom_frame').value
+        t.child_frame_id = self.get_parameter('base_frame').value
+
+        t.transform.translation.x = float(tz)
+        t.transform.translation.y = float(-tx)
+        t.transform.translation.z = float(-ty)
+
+        t.transform.rotation.x = float(q[2])
+        t.transform.rotation.y = float(-q[0])
+        t.transform.rotation.z = float(-q[1])
+        t.transform.rotation.w = float(q[3])
+
+        self.tf_broadcaster.sendTransform(t)
+
 
 def main():
     rclpy.init()
