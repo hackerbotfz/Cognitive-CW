@@ -35,7 +35,7 @@ class RobustVisualOdometry(Node):
         self.declare_parameter('depth_topic',       '/atlas/rgbd_camera/depth/image_raw')
         self.declare_parameter('camera_info_topic', '/atlas/rgbd_camera/camera_info')
         self.declare_parameter('odom_frame',        'odom')
-        self.declare_parameter('base_frame',        'atlas/base_link')
+        self.declare_parameter('base_frame',        'atlas/vo_base_link')
 
         self.odom_frame  = self.get_parameter('odom_frame').value
         self.base_frame  = self.get_parameter('base_frame').value
