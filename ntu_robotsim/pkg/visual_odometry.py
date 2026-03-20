@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import numpy as np
 import cv2
 import rclpy
@@ -12,77 +11,100 @@ import message_filters
 from scipy.spatial.transform import Rotation as R
 from tf2_ros import TransformBroadcaster
 
+
+def _reorthogonalise(mat: np.ndarray) -> np.ndarray:
+    """
+    Re-orthogonalise a 3x3 rotation matrix using SVD.
+    Floating-point accumulation over many matrix multiplications causes
+    det(R) to drift away from 1 and R^T R to drift from I.
+    SVD projects back onto SO(3) exactly.
+    """
+    U, _, Vt = np.linalg.svd(mat)
+    R_clean = U @ Vt
+    if np.linalg.det(R_clean) < 0:
+        U[:, -1] *= -1
+        R_clean = U @ Vt
+    return R_clean
+
+
 class RobustVisualOdometry(Node):
     def __init__(self):
         super().__init__('robust_visual_odometry')
 
-        self.declare_parameter('rgb_topic', '/atlas/rgbd_camera/image')
-        self.declare_parameter('depth_topic', '/atlas/rgbd_camera/depth/image_raw')
+        self.declare_parameter('rgb_topic',         '/atlas/rgbd_camera/image')
+        self.declare_parameter('depth_topic',       '/atlas/rgbd_camera/depth/image_raw')
         self.declare_parameter('camera_info_topic', '/atlas/rgbd_camera/camera_info')
-        self.declare_parameter('odom_frame', 'odom')
-        self.declare_parameter('base_frame', 'atlas/base_link')
+        self.declare_parameter('odom_frame',        'odom')
+        self.declare_parameter('base_frame',        'atlas/base_link')
+
+        self.odom_frame  = self.get_parameter('odom_frame').value
+        self.base_frame  = self.get_parameter('base_frame').value
+        rgb_topic        = self.get_parameter('rgb_topic').value
+        depth_topic      = self.get_parameter('depth_topic').value
+        camera_info_topic = self.get_parameter('camera_info_topic').value
 
         self.bridge = CvBridge()
-        
-        self.rgb_sub = message_filters.Subscriber(self, Image, self.get_parameter('rgb_topic').value)
-        self.depth_sub = message_filters.Subscriber(self, Image, self.get_parameter('depth_topic').value)
-        
+
+        self.rgb_sub   = message_filters.Subscriber(self, Image, rgb_topic)
+        self.depth_sub = message_filters.Subscriber(self, Image, depth_topic)
         self.ts = message_filters.ApproximateTimeSynchronizer(
             [self.rgb_sub, self.depth_sub], queue_size=10, slop=0.05
         )
         self.ts.registerCallback(self.sync_callback)
-        
+
         self.info_sub = self.create_subscription(
-            CameraInfo, self.get_parameter('camera_info_topic').value, self.info_callback, 10
+            CameraInfo, camera_info_topic, self.info_callback, 10
         )
-        
+
         self.odom_pub = self.create_publisher(Odometry, '/atlas/visual_odom', 10)
-        
+
         self.tf_broadcaster = TransformBroadcaster(self)
 
-        # --- FIX 2: Initialize the TF Broadcaster ---
-        self.tf_broadcaster = TransformBroadcaster(self)
-
-        self.K = None
-        self.prev_gray = None
-        self.prev_kpts = None
-        self.prev_desc = None
+        self.K          = None
+        self.prev_gray  = None
+        self.prev_kpts  = None
+        self.prev_desc  = None
         self.prev_depth = None
-        
+
         self.cur_R = np.eye(3)
         self.cur_t = np.zeros((3, 1))
-        
-        # self.alpha = 0.85  <-- Removed to fix metric scale drift
 
-        self.orb = cv2.ORB_create(nfeatures=2000)
+        self._frame_count = 0
+        self._REORTH_INTERVAL = 30
+
+        self.orb     = cv2.ORB_create(nfeatures=2000)
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING)
 
-        self.get_logger().info("Robust RGB-D VO Started. Waiting for CameraInfo...")
+        self.get_logger().info('Robust RGB-D VO Started. Waiting for CameraInfo...')
 
-    def info_callback(self, msg):
+
+    def info_callback(self, msg: CameraInfo):
         if self.K is None:
             self.K = np.array(msg.k).reshape(3, 3)
-            self.get_logger().info(f"Intrinsics Loaded: fx={self.K[0,0]}")
+            self.get_logger().info(f'Intrinsics Loaded: fx={self.K[0, 0]:.2f}')
+            self.destroy_subscription(self.info_sub)
+            self.info_sub = None
 
-    def sync_callback(self, rgb_msg, depth_msg):
+
+    def sync_callback(self, rgb_msg: Image, depth_msg: Image):
         if self.K is None:
             return
 
         try:
-            curr_gray = self.bridge.imgmsg_to_cv2(rgb_msg, 'mono8')
-            raw_depth = self.bridge.imgmsg_to_cv2(depth_msg, 'passthrough')
-            
+            curr_gray  = self.bridge.imgmsg_to_cv2(rgb_msg,   'mono8')
+            raw_depth  = self.bridge.imgmsg_to_cv2(depth_msg, 'passthrough')
+
             if raw_depth.dtype == np.uint16:
                 curr_depth = raw_depth.astype(np.float32) / 1000.0
             else:
-                curr_depth = raw_depth
+                curr_depth = raw_depth.astype(np.float32)
         except Exception as e:
-            self.get_logger().error(f"Conversion failed: {e}")
+            self.get_logger().error(f'Image conversion failed: {e}')
             return
 
         curr_kpts, curr_desc = self.orb.detectAndCompute(curr_gray, None)
         if curr_desc is None or len(curr_kpts) < 30:
-            self._handle_failure("Insufficient features in current frame")
+            self._handle_failure('Insufficient features in current frame')
             return
 
         if self.prev_desc is None:
@@ -92,18 +114,30 @@ class RobustVisualOdometry(Node):
         self.estimate_motion(curr_kpts, curr_desc, curr_depth, rgb_msg.header.stamp)
         self._update_reference(curr_gray, curr_kpts, curr_desc, curr_depth)
 
-    def estimate_motion(self, curr_kpts, curr_desc, curr_depth, stamp):
-        matches = self.matcher.knnMatch(self.prev_desc, curr_desc, k=2)
-        good = [m for m, n in matches if m.distance < 0.75 * n.distance]
 
-        obj_pts, img_pts = [], []
+    def estimate_motion(self, curr_kpts, curr_desc, curr_depth, stamp):
+        raw_matches = self.matcher.knnMatch(self.prev_desc, curr_desc, k=2)
+
+        good = [
+            m for match in raw_matches
+            if len(match) == 2
+            for m, n in [match]
+            if m.distance < 0.75 * n.distance
+        ]
+
+        h, w = self.prev_depth.shape[:2]
         cx, cy = self.K[0, 2], self.K[1, 2]
         fx, fy = self.K[0, 0], self.K[1, 1]
 
+        obj_pts, img_pts = [], []
         for m in good:
             u, v = self.prev_kpts[m.queryIdx].pt
-            z = self.prev_depth[int(v), int(u)]
-            
+            ui, vi = int(u), int(v)
+
+            ui = min(ui, w - 1)
+            vi = min(vi, h - 1)
+
+            z = self.prev_depth[vi, ui]
             if np.isfinite(z) and 0.1 < z < 10.0:
                 x = (u - cx) * z / fx
                 y = (v - cy) * z / fy
@@ -111,76 +145,89 @@ class RobustVisualOdometry(Node):
                 img_pts.append(curr_kpts[m.trainIdx].pt)
 
         if len(obj_pts) < 15:
-            self._handle_failure("Not enough valid depth points")
+            self._handle_failure('Not enough valid depth points')
             return
 
         success, rvec, tvec, inliers = cv2.solvePnPRansac(
-            np.array(obj_pts, dtype=np.float32), 
-            np.array(img_pts, dtype=np.float32), 
-            self.K, None, iterationsCount=100, reprojectionError=2.0
+            np.array(obj_pts, dtype=np.float32),
+            np.array(img_pts, dtype=np.float32),
+            self.K, None,
+            iterationsCount=100,
+            reprojectionError=2.0
         )
 
         if not success or inliers is None or len(inliers) < 12:
-            self._handle_failure("PnP RANSAC failed or low inliers")
+            self._handle_failure('PnP RANSAC failed or low inliers')
             return
 
         rmat, _ = cv2.Rodrigues(rvec)
         R_rel = rmat.T
+        tvec  = tvec.reshape(3, 1)
         t_rel = -rmat.T @ tvec
 
-        if np.linalg.norm(t_rel) > 1.5:
-            self._handle_failure("Motion jump exceeds physical limits")
+        translation_norm = np.linalg.norm(t_rel)
+
+        if not np.isfinite(translation_norm) or translation_norm > 1.5:
+            self._handle_failure(
+                f'Motion rejected: norm={translation_norm:.3f} (NaN/Inf or jump)')
             return
 
-        # --- FIX 3: Removed the alpha multiplier to prevent under-reporting distance ---
-        self.cur_t += (self.cur_R @ t_rel)
-        self.cur_R = self.cur_R @ R_rel
-        
+        self.cur_t += self.cur_R @ t_rel
+        self.cur_R  = self.cur_R @ R_rel
+
+        self._frame_count += 1
+        if self._frame_count % self._REORTH_INTERVAL == 0:
+            self.cur_R = _reorthogonalise(self.cur_R)
+
         self.publish_odom(stamp)
 
-    def _update_reference(self, gray, kpts, desc, depth):
-        self.prev_gray, self.prev_kpts, self.prev_desc, self.prev_depth = \
-            gray, kpts, desc, depth
 
-    def _handle_failure(self, reason):
-        self.get_logger().warn(f"VO Tracker Reset: {reason}")
+    def _update_reference(self, gray, kpts, desc, depth):
+        self.prev_gray  = gray
+        self.prev_kpts  = kpts
+        self.prev_desc  = desc
+        self.prev_depth = depth
+
+    def _handle_failure(self, reason: str):
+        self.get_logger().warn(f'VO Tracker Reset: {reason}')
         self.prev_desc = None
 
-    def publish_odom(self, stamp):
-        msg = Odometry()
-        msg.header.stamp = stamp
-        msg.header.frame_id = self.get_parameter('odom_frame').value
-        msg.child_frame_id = self.get_parameter('base_frame').value
 
+    def publish_odom(self, stamp):
         tx, ty, tz = self.cur_t.flatten()
+
+        rot = R.from_matrix(self.cur_R)
+        q   = rot.as_quat()
+
+        msg = Odometry()
+        msg.header.stamp    = stamp
+        msg.header.frame_id = self.odom_frame
+        msg.child_frame_id  = self.base_frame
+
         msg.pose.pose.position.x = float(tz)
         msg.pose.pose.position.y = float(-tx)
         msg.pose.pose.position.z = float(-ty)
 
-        rot = R.from_matrix(self.cur_R)
-        q = rot.as_quat()
         msg.pose.pose.orientation.x = float(q[2])
         msg.pose.pose.orientation.y = float(-q[0])
         msg.pose.pose.orientation.z = float(-q[1])
         msg.pose.pose.orientation.w = float(q[3])
 
-        # --- FIX 1: Proper diagonal covariance matrix ---
-        covariance = [0.0] * 36
-        covariance[0]  = 0.01  # x
-        covariance[7]  = 0.01  # y
-        covariance[14] = 0.01  # z
-        covariance[21] = 0.01  # roll
-        covariance[28] = 0.01  # pitch
-        covariance[35] = 0.01  # yaw
+        covariance       = [0.0] * 36
+        covariance[0]    = 0.01
+        covariance[7]    = 0.01
+        covariance[14]   = 0.01
+        covariance[21]   = 0.01
+        covariance[28]   = 0.01
+        covariance[35]   = 0.01
         msg.pose.covariance = covariance
-        
+
         self.odom_pub.publish(msg)
 
-        # --- FIX 2: Broadcast the TF ---
         t = TransformStamped()
-        t.header.stamp = stamp
-        t.header.frame_id = self.get_parameter('odom_frame').value
-        t.child_frame_id = self.get_parameter('base_frame').value
+        t.header.stamp    = stamp
+        t.header.frame_id = self.odom_frame
+        t.child_frame_id  = self.base_frame
 
         t.transform.translation.x = float(tz)
         t.transform.translation.y = float(-tx)
@@ -195,15 +242,21 @@ class RobustVisualOdometry(Node):
 
 
 def main():
-    rclpy.init()
-    node = RobustVisualOdometry()
+    rclpy_initialised = False
+    node = None
     try:
+        rclpy.init()
+        rclpy_initialised = True
+        node = RobustVisualOdometry()
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.destroy_node()
-        rclpy.shutdown()
+        if node is not None:
+            node.destroy_node()
+        if rclpy_initialised:
+            rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
