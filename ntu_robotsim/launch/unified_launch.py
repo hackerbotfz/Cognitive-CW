@@ -16,13 +16,13 @@ def generate_launch_description():
 			os.path.join(ntu_sim_dir, 'launch', 'cwmaze.launch.py')
 		)
 	)
-	
+
 	atlas = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'single_robot_sim.launch.py')
 		)
 	)
-	
+
 	odom_to_tf = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(odom_tf_dir, 'launch', 'atlas_odom_to_tf.launch.py')
@@ -32,39 +32,36 @@ def generate_launch_description():
 	vo_vo_map_transformer = Node(
 		package = "tf2_ros",
 		executable = "static_transform_publisher",
-		arguments = ["0", "0", "0", "0", "0", "0", "map", "vo_odom"]
+		arguments = ["-3.0", "2.5", "0.0", "0.0", "0.0", "0.0", "map", "vo_odom"]
 	)
-	
 	map_transformer = Node(
 		package = "tf2_ros",
 		executable = "static_transform_publisher",
-		arguments = ["0", "0", "0", "0", "0", "0", "map", "vo_odom"]
+		arguments = ["-3.0", "2.5", "0.0", "0.0", "0.0", "0.0", "map", "vo_odom"]
 	)
-	
 	vo_map_transformer = Node(
 		package = "tf2_ros",
 		executable = "static_transform_publisher",
-		arguments = ["0", "0", "0", "0", "0", "0", "map", "vo_odom"]
+		arguments = ["-3.0", "2.5", "0.0", "0.0", "0.0", "0.0", "map", "vo_odom"]
 	)
-	
 	map_transformer = Node(
 		package = "tf2_ros",
 		executable = "static_transform_publisher",
 		arguments = ["0", "0", "0", "0", "0", "0", "map", "odom"]
 	)
-	
+
 	octomap = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'octomap.launch.py')
 		)
 	)
-	
+
 	nav2 = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'nav2.launch.py')
 		)
 	)
-	
+
 	rviz = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'rviz.launch.py')
@@ -99,6 +96,7 @@ def generate_launch_description():
         	'distance_threshold': 0.5,
         	'map_frame': 'map',
     }]
+
 )
 
 	return LaunchDescription([
