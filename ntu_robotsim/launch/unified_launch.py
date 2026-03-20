@@ -54,11 +54,12 @@ def generate_launch_description():
 	)
 
 	visual_odometry = Node(
-		package = "ntu_robotsim",
-		executable = "visual_odometry.py",
-		name = "visual_odometry",
-		prefix='xterm -e',
-		output = "screen"
+    		package = "ntu_robotsim",
+    		executable = "visual_odometry.py",
+    		name = "visual_odometry",
+    		prefix='xterm -e',
+    		output = "screen",
+    		parameters=[{'odom_frame': 'vo_odom'}]
 	)
 
 	teleop = Node(
