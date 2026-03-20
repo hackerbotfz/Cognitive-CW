@@ -3,100 +3,177 @@
 import rclpy
 from rclpy.node import Node
 from visualization_msgs.msg import Marker, MarkerArray
-from geometry_msgs.msg import Point
 import json
-import os
 import math
+import os
+
+_REQUIRED_KEYS = {'x': float, 'y': float, 'z': float, 'type': str, 'count': int}
+
+
+def _is_valid_landmark(entry) -> bool:
+    """Return True only if *entry* is a dict with all required keys and sane types."""
+    if not isinstance(entry, dict):
+        return False
+    for key, expected_type in _REQUIRED_KEYS.items():
+        value = entry.get(key)
+        if value is None:
+            return False
+        if not isinstance(value, expected_type if expected_type is not float else (int, float)):
+            return False
+    if not all(math.isfinite(entry[k]) for k in ('x', 'y', 'z')):
+        return False
+    if entry['count'] < 1:
+        return False
+    return True
+
 
 class LandmarkDatabase(Node):
     def __init__(self):
         super().__init__('landmark_database')
 
-        # Parameters
         self.declare_parameter('database_file', 'landmark_db.json')
-        self.declare_parameter('distance_threshold', 0.5) # Meters to consider a landmark "new"
+        self.declare_parameter('distance_threshold', 0.5)
+        self.declare_parameter('map_frame', 'map')
 
-        self.db_file = self.get_parameter('database_file').get_parameter_value().string_value
+        self.db_file     = self.get_parameter('database_file').get_parameter_value().string_value
         self.dist_thresh = self.get_parameter('distance_threshold').get_parameter_value().double_value
+        self.map_frame   = self.get_parameter('map_frame').get_parameter_value().string_value
 
-        # Storage: {id: {'x': val, 'y': val, 'z': val, 'type': label, 'count': n}}
-        self.landmarks = {}
-        
-        # Load existing db if available
+        self.landmarks: dict = {}
+
+        self._dirty: bool = False
+
         self.load_database()
 
-        # Subscribers
-        # Assuming object detection publishes visualization markers
         self.subscription = self.create_subscription(
             MarkerArray,
             '/detected_markers',
             self.marker_callback,
             10)
 
-        # Publishers
         self.db_publisher = self.create_publisher(MarkerArray, '/landmark_database_vis', 10)
-        
-        # Timer for saving/publishing
+
         self.timer = self.create_timer(1.0, self.timer_callback)
-        
+
         self.get_logger().info('Landmark Database Node Started')
 
     def load_database(self):
-        if os.path.exists(self.db_file):
-            try:
-                with open(self.db_file, 'r') as f:
-                    self.landmarks = json.load(f)
-                self.get_logger().info(f'Loaded {len(self.landmarks)} landmarks from Json.')
-            except Exception as e:
-                self.get_logger().error(f'Failed to load database: {str(e)}')
+        """Load landmarks from JSON, validating structure and every entry."""
+        if not os.path.exists(self.db_file):
+            return
+
+        try:
+            with open(self.db_file, 'r') as f:
+                raw = json.load(f)
+        except json.JSONDecodeError as e:
+            self.get_logger().error(f'Database file is not valid JSON, starting fresh: {e}')
+            return
+        except OSError as e:
+            self.get_logger().error(f'Could not read database file: {e}')
+            return
+
+        if not isinstance(raw, dict):
+            self.get_logger().error(
+                f'Database root is {type(raw).__name__}, expected dict — starting fresh.')
+            return
+
+        valid, skipped = {}, 0
+        for lm_id, entry in raw.items():
+            if not isinstance(lm_id, str) or not lm_id.isdigit():
+                self.get_logger().warning(
+                    f'Skipping landmark with non-integer key: "{lm_id}"')
+                skipped += 1
+                continue
+            if not _is_valid_landmark(entry):
+                self.get_logger().warning(
+                    f'Skipping malformed landmark entry for id "{lm_id}": {entry}')
+                skipped += 1
+                continue
+            valid[lm_id] = entry
+
+        self.landmarks = valid
+        self.get_logger().info(
+            f'Loaded {len(self.landmarks)} landmarks '
+            f'({skipped} skipped as malformed).')
 
     def save_database(self):
-        try:
-            with open(self.db_file, 'w') as f:
-                json.dump(self.landmarks, f, indent=4)
-        except Exception as e:
-            self.get_logger().error(f'Failed to save database: {str(e)}')
+        """Atomically write landmarks to disk using a temp-file + rename."""
+        if not self._dirty:
+            return
 
-    def is_duplicate(self, pos):
-        # Check against existing landmarks
+        tmp_file = self.db_file + '.tmp'
+        try:
+            with open(tmp_file, 'w') as f:
+                json.dump(self.landmarks, f, indent=4)
+            os.replace(tmp_file, self.db_file)
+            self._dirty = False
+        except OSError as e:
+            self.get_logger().error(f'Failed to save database: {e}')
+            try:
+                if os.path.exists(tmp_file):
+                    os.unlink(tmp_file)
+            except OSError:
+                pass
+
+    def is_duplicate(self, pos) -> 'str | None':
+        """Return the ID of an existing landmark within dist_thresh, or None."""
         for lm_id, data in self.landmarks.items():
-            dist = math.sqrt(
-                (data['x'] - pos.x)**2 + 
-                (data['y'] - pos.y)**2 + 
-                (data['z'] - pos.z)**2
-            )
+            try:
+                dist = math.sqrt(
+                    (data['x'] - pos.x) ** 2 +
+                    (data['y'] - pos.y) ** 2 +
+                    (data['z'] - pos.z) ** 2
+                )
+            except (KeyError, TypeError):
+                continue
             if dist < self.dist_thresh:
-                return lm_id # Return the ID of the close match
+                return lm_id
         return None
 
-    def marker_callback(self, msg):
+    def marker_callback(self, msg: MarkerArray):
         for marker in msg.markers:
-            # We assume the marker ID or text identifies the class (e.g. "stop_sign")
-            # If your detection node provides a specific ID, use it.
-            # Here we generate a unique ID based on position if it's new.
-            
-            existing_id = self.is_duplicate(marker.pose.position)
-            
-            if existing_id:
-                # Update existing landmark (simple moving average for stability)
+            if marker.action in (Marker.DELETE, Marker.DELETEALL):
+                continue
+
+            pos = marker.pose.position
+
+            if not all(math.isfinite(v) for v in (pos.x, pos.y, pos.z)):
+                self.get_logger().warning(
+                    f'Discarding marker with non-finite position '
+                    f'({pos.x}, {pos.y}, {pos.z})')
+                continue
+
+            existing_id = self.is_duplicate(pos)
+
+            if existing_id is not None:
                 lm = self.landmarks[existing_id]
                 n = lm['count']
-                lm['x'] = (lm['x'] * n + marker.pose.position.x) / (n + 1)
-                lm['y'] = (lm['y'] * n + marker.pose.position.y) / (n + 1)
-                lm['z'] = (lm['z'] * n + marker.pose.position.z) / (n + 1)
-                lm['count'] += 1
+
+                effective_n = min(n, 10_000)
+                lm['x'] = (lm['x'] * effective_n + pos.x) / (effective_n + 1)
+                lm['y'] = (lm['y'] * effective_n + pos.y) / (effective_n + 1)
+                lm['z'] = (lm['z'] * effective_n + pos.z) / (effective_n + 1)
+                lm['count'] = n + 1
+                self._dirty = True
                 self.get_logger().debug(f'Updated landmark {existing_id}')
             else:
-                # Add new landmark
-                new_id = str(len(self.landmarks) + 1)
+                existing_ids = [int(k) for k in self.landmarks.keys()]
+                new_id = str(max(existing_ids) + 1 if existing_ids else 1)
+
+                label = marker.text.strip() if marker.text else ''
+                label = label or f'landmark_{new_id}'
+
                 self.landmarks[new_id] = {
-                    'x': marker.pose.position.x,
-                    'y': marker.pose.position.y,
-                    'z': marker.pose.position.z,
-                    'type': marker.text if marker.text else f"landmark_{new_id}",
+                    'x': pos.x,
+                    'y': pos.y,
+                    'z': pos.z,
+                    'type': label,
                     'count': 1
                 }
-                self.get_logger().info(f'Added new landmark {new_id} at ({marker.pose.position.x:.2f}, {marker.pose.position.y:.2f})')
+                self._dirty = True
+                self.get_logger().info(
+                    f'Added new landmark {new_id} ({label}) '
+                    f'at ({pos.x:.2f}, {pos.y:.2f}, {pos.z:.2f})')
 
     def timer_callback(self):
         self.save_database()
@@ -104,56 +181,75 @@ class LandmarkDatabase(Node):
 
     def publish_database_markers(self):
         ma = MarkerArray()
+        stamp = self.get_clock().now().to_msg()
+
         for lm_id, data in self.landmarks.items():
+            if not lm_id.isdigit():
+                continue
+
+            if not _is_valid_landmark(data):
+                self.get_logger().warning(
+                    f'Skipping malformed landmark {lm_id} during publish')
+                continue
+
+            numeric_id = int(lm_id)
+
             m = Marker()
-            m.header.frame_id = "map" # Assuming landmarks are in map frame
-            m.header.stamp = self.get_clock().now().to_msg()
-            m.id = int(lm_id)
+            m.header.frame_id = self.map_frame
+            m.header.stamp = stamp
+            m.id = numeric_id
             m.type = Marker.SPHERE
             m.action = Marker.ADD
-            m.pose.position.x = data['x']
-            m.pose.position.y = data['y']
-            m.pose.position.z = data['z']
+            m.pose.position.x = float(data['x'])
+            m.pose.position.y = float(data['y'])
+            m.pose.position.z = float(data['z'])
             m.pose.orientation.w = 1.0
             m.scale.x = 0.2
             m.scale.y = 0.2
             m.scale.z = 0.2
             m.color.a = 1.0
-            m.color.g = 1.0 # Green for database objects
+            m.color.g = 1.0
             m.text = data['type']
-            
-            # Text label
-            text_marker = Marker()
-            text_marker.header = m.header
-            text_marker.id = int(lm_id) + 1000
-            text_marker.type = Marker.TEXT_VIEW_FACING
-            text_marker.action = Marker.ADD
-            text_marker.pose.position.x = data['x']
-            text_marker.pose.position.y = data['y']
-            text_marker.pose.position.z = data['z'] + 0.3
-            text_marker.scale.z = 0.2
-            text_marker.color.a = 1.0
-            text_marker.color.r = 1.0
-            text_marker.color.g = 1.0
-            text_marker.color.b = 1.0
-            text_marker.text = f"{data['type']} ({lm_id})"
+
+            t = Marker()
+            t.header.frame_id = self.map_frame
+            t.header.stamp = stamp
+            t.id = numeric_id + 100_000
+            t.type = Marker.TEXT_VIEW_FACING
+            t.action = Marker.ADD
+            t.pose.position.x = float(data['x'])
+            t.pose.position.y = float(data['y'])
+            t.pose.position.z = float(data['z']) + 0.3
+            t.scale.z = 0.2
+            t.color.a = 1.0
+            t.color.r = 1.0
+            t.color.g = 1.0
+            t.color.b = 1.0
+            t.text = f"{data['type']} ({lm_id})"
 
             ma.markers.append(m)
-            ma.markers.append(text_marker)
-        
+            ma.markers.append(t)
+
         self.db_publisher.publish(ma)
 
+
 def main(args=None):
-    rclcpp.init(args=args)
-    node = LandmarkDatabase()
+    rclpy_initialised = False
+    node = None
     try:
-        rclcpp.spin(node)
+        rclpy.init(args=args)
+        rclpy_initialised = True
+        node = LandmarkDatabase()
+        rclpy.spin(node)
     except KeyboardInterrupt:
         pass
     finally:
-        node.save_database()
-        node.destroy_node()
-        rclcpp.shutdown()
+        if node is not None:
+            node.save_database()
+            node.destroy_node()
+        if rclpy_initialised:
+            rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
