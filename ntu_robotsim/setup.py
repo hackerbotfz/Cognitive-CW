@@ -17,6 +17,7 @@ setup(
     entry_points={
         'console_scripts': [
             'visual_odometry = pkg.visual_odometry:main',
+            'landmark_database = pkg.landmark_database:main',
         ],
     },
 )
