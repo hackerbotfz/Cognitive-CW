@@ -16,52 +16,44 @@ def generate_launch_description():
 			os.path.join(ntu_sim_dir, 'launch', 'cwmaze.launch.py')
 		)
 	)
-
 	atlas = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'single_robot_sim.launch.py')
 		)
 	)
-
 	odom_to_tf = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(odom_tf_dir, 'launch', 'atlas_odom_to_tf.launch.py')
 		)
 	)
-
 	map_transformer = Node(
 		package = "tf2_ros",
 		executable = "static_transform_publisher",
 		arguments = ["0", "0", "0", "0", "0", "0", "map", "odom"]
 	)
-
 	octomap = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'octomap.launch.py')
 		)
 	)
-
 	nav2 = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'nav2.launch.py')
 		)
 	)
-
 	rviz = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'rviz.launch.py')
 		)
 	)
-
 	visual_odometry = Node(
-    		package = "ntu_robotsim",
-    		executable = "visual_odometry.py",
-    		name = "visual_odometry",
-    		prefix='xterm -e',
-    		output = "screen",
-    		parameters=[{'odom_frame': 'vo_odom'}]
+		package = "ntu_robotsim",
+		executable = "visual_odometry.py",
+		name = "visual_odometry",
+		prefix='xterm -e',
+		output = "screen",
+		parameters=[{'odom_frame': 'vo_odom'}]
 	)
-
 	teleop = Node(
 		package='teleop_twist_keyboard',
 		executable='teleop_twist_keyboard',
@@ -69,6 +61,17 @@ def generate_launch_description():
 		prefix='xterm -e',
 		output='screen',
 		remappings=[('cmd_vel', 'atlas/cmd_vel')]
+	)
+	landmark_database = Node(
+		package='ntu_robotsim',
+		executable='landmark_database',
+		name='landmark_database',
+		output='screen',
+		parameters=[{
+			'database_file': os.path.join(ntu_sim_dir, 'landmark_db.json'),
+			'distance_threshold': 0.5,
+			'map_frame': 'map',
+		}]
 	)
 
 	return LaunchDescription([
@@ -80,5 +83,6 @@ def generate_launch_description():
 		nav2,
 		rviz,
 		teleop,
-		visual_odometry
+		visual_odometry,
+		landmark_database,
 	])
