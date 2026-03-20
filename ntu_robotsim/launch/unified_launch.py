@@ -63,16 +63,16 @@ def generate_launch_description():
 		remappings=[('cmd_vel', 'atlas/cmd_vel')]
 	)
 	landmark_database = Node(
-		package='ntu_robotsim',
-		executable='landmark_database',
-		name='landmark_database',
-		output='screen',
-		parameters=[{
-			'database_file': os.path.join(ntu_sim_dir, 'landmark_db.json'),
-			'distance_threshold': 0.5,
-			'map_frame': 'map',
-		}]
-	)
+    	package='ntu_robotsim',
+    	executable='landmark_database.py',
+    	name='landmark_database',
+    	output='screen',
+    	parameters=[{
+        	'database_file': os.path.join(ntu_sim_dir, 'landmark_db.json'),
+        	'distance_threshold': 0.5,
+        	'map_frame': 'map',
+    }]
+)
 
 	return LaunchDescription([
 		maze,
