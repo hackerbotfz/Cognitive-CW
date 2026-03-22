@@ -256,7 +256,14 @@ class LandmarkDatabaseNode(Node):
         w = data.get('image_width', 640)
         h = data.get('image_height', 480)
 
-        for det in data.get('detections', []):
+        # Count how many of each label are visible in this frame
+        detections_list = data.get('detections', [])
+        label_counts = {}
+        for det in detections_list:
+            lbl = det.get('label', 'unknown')
+            label_counts[lbl] = label_counts.get(lbl, 0) + 1
+
+        for det in detections_list:
             label = det.get('label', 'unknown')
             confidence = float(det.get('confidence', 0.0))
             cx_px = int(det.get('center_x', w / 2))
@@ -285,30 +292,40 @@ class LandmarkDatabaseNode(Node):
 
             x3d, y3d, z3d = pos
 
-            attrs = {
-                'image_x': cx_px,
-                'image_y': cy_px,
-                'image_width': w,
-                'image_height': h,
-            }
-
             merge_radius = (
                 self.get_parameter('merge_radius')
                 .get_parameter_value()
                 .double_value
             )
 
-            lid, updated = self.db.add_or_update(
+            # Skip if a nearby landmark of the same label already exists
+            existing = self.db.query_by_label(label)
+            already_stored = any(
+                math.sqrt((e.x - x3d)**2 + (e.y - y3d)**2 + (e.z - z3d)**2) <= merge_radius
+                for e in existing
+            )
+            if already_stored:
+                continue
+
+            attrs = {
+                'image_x': cx_px,
+                'image_y': cy_px,
+                'image_width': w,
+                'image_height': h,
+                'item_count': label_counts.get(label, 1),
+            }
+
+            lid, _ = self.db.add_or_update(
                 label, x3d, y3d, z3d, confidence,
                 merge_radius=merge_radius,
                 attributes=attrs,
             )
             self._db_dirty = True
-            action = 'Updated' if updated else 'Added'
             self.get_logger().info(
-                f'{action} landmark {lid} ({label}) at '
+                f'Added landmark {lid} ({label}) at '
                 f'({x3d:.2f}, {y3d:.2f}, {z3d:.2f})  '
-                f'conf={confidence:.2f}  total={len(self.db)}'
+                f'conf={confidence:.2f}  '
+                f'items_in_frame={label_counts.get(label, 1)}  total={len(self.db)}'
             )
 
     # ------------------------------------------------------------------
