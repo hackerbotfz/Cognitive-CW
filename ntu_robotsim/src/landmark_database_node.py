@@ -44,6 +44,21 @@ merge_radius : float
 query_label : str
     Label filter used by the ``/landmark_database/query_by_label`` service.
 
+Depth requirement
+-----------------
+3-D positions are computed by back-projecting the detection centre pixel
+through the depth image from ``/atlas/rgbd_camera/depth_image``.  If no
+depth image has been received (e.g. the camera is not publishing yet) or
+the sampled depth value is zero / NaN, the node **skips** that detection
+and logs a warning — it never stores a ``(0, 0, 0)`` placeholder.  Watch
+the node output for ``"Skipping landmark"`` messages; if you see them,
+check that the depth camera topic is active::
+
+    ros2 topic hz /atlas/rgbd_camera/depth_image
+
+``cv_bridge`` and ``numpy`` must also be installed; the node logs an error
+at startup if they are missing.
+
 File output
 -----------
 After at least one detection has been received the database is saved as a
@@ -58,6 +73,7 @@ import math
 import os
 import sys
 import tempfile
+from typing import Optional, Tuple
 
 import rclpy
 from rclpy.node import Node
@@ -91,6 +107,11 @@ class LandmarkDatabaseNode(Node):
 
     _DEFAULT_DB_FILENAME = 'landmark_database.json'
 
+    # Depth-health warning schedule (in 1 Hz timer ticks = seconds).
+    # Warn at these tick counts and then every _DEPTH_WARN_INTERVAL ticks.
+    _DEPTH_WARN_TICKS = (5, 35, 65)
+    _DEPTH_WARN_INTERVAL = 30
+
     def __init__(self) -> None:
         super().__init__('landmark_database_node')
 
@@ -104,15 +125,23 @@ class LandmarkDatabaseNode(Node):
 
         # ---- latest depth frame ----
         self._depth_image = None
+        self._depth_received: bool = False
 
         # ---- dirty flag: True when the db has changed since last file write ----
         self._db_dirty: bool = False
 
+        # ---- throttle counter for "no depth" warnings ----
+        self._no_depth_warn_count: int = 0
+        self._depth_health_ticks: int = 0
+
         if _CV_AVAILABLE:
             self._bridge = CvBridge()
         else:
-            self.get_logger().warn(
-                'cv_bridge / numpy not available – depth back-projection disabled.'
+            self.get_logger().error(
+                'cv_bridge / numpy are not installed – depth back-projection is '
+                'disabled and all landmark positions will be unknown.  '
+                'Install with: pip install opencv-python && sudo apt install '
+                'ros-$ROS_DISTRO-cv-bridge'
             )
 
         # ---- subscriptions ----
@@ -204,6 +233,9 @@ class LandmarkDatabaseNode(Node):
             self._depth_image = self._bridge.imgmsg_to_cv2(
                 msg, desired_encoding='passthrough'
             )
+            if not self._depth_received:
+                self._depth_received = True
+                self.get_logger().info('First depth frame received – 3-D positions now active.')
         except CvBridgeError as exc:
             self.get_logger().warn(f'Depth image conversion error: {exc}')
 
@@ -223,7 +255,33 @@ class LandmarkDatabaseNode(Node):
             cx_px = int(det.get('center_x', w / 2))
             cy_px = int(det.get('center_y', h / 2))
 
-            x3d, y3d, z3d = self._pixel_to_3d(cx_px, cy_px)
+            pos = self._pixel_to_3d(cx_px, cy_px)
+
+            if pos is None:
+                # Depth not available – log a throttled warning and skip this
+                # detection so that (0,0,0) placeholders don't pollute the DB.
+                self._no_depth_warn_count += 1
+                if self._no_depth_warn_count <= 3 or self._no_depth_warn_count % 50 == 0:
+                    if not _CV_AVAILABLE:
+                        reason = 'cv_bridge / numpy are not installed'
+                    elif not self._depth_received:
+                        reason = (
+                            'no depth image received yet on '
+                            '/atlas/rgbd_camera/depth_image'
+                        )
+                    else:
+                        reason = (
+                            f'depth value is zero or invalid at pixel '
+                            f'({cx_px}, {cy_px})'
+                        )
+                    self.get_logger().warn(
+                        f'Skipping landmark "{label}" – 3-D position unknown '
+                        f'({reason}).  '
+                        f'[{self._no_depth_warn_count} detection(s) skipped so far]'
+                    )
+                continue
+
+            x3d, y3d, z3d = pos
 
             attrs = {
                 'image_x': cx_px,
@@ -255,15 +313,19 @@ class LandmarkDatabaseNode(Node):
     # Helpers
     # ------------------------------------------------------------------
 
-    def _pixel_to_3d(self, px: int, py: int):
+    def _pixel_to_3d(
+        self, px: int, py: int
+    ) -> Optional[Tuple[float, float, float]]:
         """Back-project pixel (px, py) to 3-D using the depth frame.
 
-        Returns a ``(x, y, z)`` tuple in the camera optical frame.
-        Falls back to ``(0.0, 0.0, 0.0)`` when depth is unavailable
-        or the sampled value is invalid.
+        Returns a ``(x, y, z)`` tuple in the camera optical frame, or
+        ``None`` when the depth value is unavailable or invalid (cv_bridge
+        not installed, no depth frame received yet, or zero/NaN depth at the
+        sampled pixel).  Callers must check for ``None`` and must **not**
+        store ``(0, 0, 0)`` as a position placeholder.
         """
         if not _CV_AVAILABLE or self._depth_image is None:
-            return 0.0, 0.0, 0.0
+            return None
 
         h, w = self._depth_image.shape[:2]
         px = max(0, min(px, w - 1))
@@ -276,7 +338,7 @@ class LandmarkDatabaseNode(Node):
             depth /= 1000.0
 
         if not math.isfinite(depth) or depth <= 0.0:
-            return 0.0, 0.0, 0.0
+            return None
 
         x = (px - self._cx) * depth / self._fx
         y = (py - self._cy) * depth / self._fy
@@ -288,10 +350,32 @@ class LandmarkDatabaseNode(Node):
     # ------------------------------------------------------------------
 
     def _publish_state(self) -> None:
+        self._check_depth_health()
         self._publish_markers()
         self._publish_json()
         self._publish_count()
         self._save_to_file()
+
+    def _check_depth_health(self) -> None:
+        """Warn periodically if depth images have never been received."""
+        if _CV_AVAILABLE and not self._depth_received:
+            self._depth_health_ticks += 1
+            last_scheduled = self._DEPTH_WARN_TICKS[-1]
+            should_warn = (
+                self._depth_health_ticks in self._DEPTH_WARN_TICKS
+                or (
+                    self._depth_health_ticks > last_scheduled
+                    and (self._depth_health_ticks - last_scheduled)
+                    % self._DEPTH_WARN_INTERVAL == 0
+                )
+            )
+            if should_warn:
+                self.get_logger().warn(
+                    'No depth image received yet on '
+                    '/atlas/rgbd_camera/depth_image – '
+                    'landmark 3-D positions will be unknown until '
+                    'the depth camera starts publishing.'
+                )
 
     def _save_to_file(self, force: bool = False) -> None:
         """Write the current database to *db_file* as pretty-printed JSON.
