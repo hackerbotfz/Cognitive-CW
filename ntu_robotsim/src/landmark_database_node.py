@@ -215,10 +215,41 @@ class LandmarkDatabaseNode(Node):
             f'Landmark database will be saved to: {self._db_file}'
         )
 
+        # ---- load existing database from file ----
+        self._load_from_file()
+
         # ---- 1 Hz publish timer ----
         self.create_timer(1.0, self._publish_state)
 
         self.get_logger().info('LandmarkDatabaseNode started')
+
+    # ------------------------------------------------------------------
+    # Startup loader
+    # ------------------------------------------------------------------
+
+    def _load_from_file(self) -> None:
+        if not os.path.exists(self._db_file):
+            self.get_logger().info('No existing database file found – starting fresh.')
+            return
+        try:
+            with open(self._db_file, 'r') as f:
+                entries = json.load(f)
+            for e in entries:
+                pos = e.get('position', {})
+                self.db.add_or_update(
+                    label=e['label'],
+                    x=pos.get('x', 0.0),
+                    y=pos.get('y', 0.0),
+                    z=pos.get('z', 0.0),
+                    confidence=e.get('confidence', 0.0),
+                    merge_radius=0.0,
+                    attributes=e.get('attributes', {}),
+                )
+            self.get_logger().info(
+                f'Loaded {len(entries)} landmark(s) from {self._db_file}'
+            )
+        except Exception as exc:
+            self.get_logger().warn(f'Could not load database file: {exc}')
 
     # ------------------------------------------------------------------
     # Subscription callbacks
@@ -298,13 +329,8 @@ class LandmarkDatabaseNode(Node):
                 .double_value
             )
 
-            # Skip if a nearby landmark of the same label already exists
-            existing = self.db.query_by_label(label)
-            already_stored = any(
-                math.sqrt((e.x - x3d)**2 + (e.y - y3d)**2 + (e.z - z3d)**2) <= merge_radius
-                for e in existing
-            )
-            if already_stored:
+            # Skip if any landmark of this label has already been stored
+            if self.db.query_by_label(label):
                 continue
 
             attrs = {
