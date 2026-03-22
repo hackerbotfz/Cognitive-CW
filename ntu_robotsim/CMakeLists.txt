@@ -3,8 +3,12 @@ cmake_minimum_required(VERSION 3.5)
 project(ntu_robotsim)
 
 find_package(ament_cmake REQUIRED)
+find_package(ament_cmake_python REQUIRED)
 
-# ROS2 build
+# Install the ntu_robotsim Python module (landmark_database, etc.)
+ament_python_install_package(ntu_robotsim)
+
+# ROS2 build – install shared resources
 install(DIRECTORY
   config
   models
@@ -12,6 +16,13 @@ install(DIRECTORY
   launch
   maps
   DESTINATION share/${PROJECT_NAME}
+)
+
+# Install Python executable scripts
+install(PROGRAMS
+  src/yolo_detector.py
+  src/landmark_database_node.py
+  DESTINATION lib/${PROJECT_NAME}
 )
 
 # setup the environmental hooks for the Gazebo resource path
