@@ -265,17 +265,17 @@ class LandmarkDatabaseNode(Node):
             pos = None
             if self._latest_cloud is not None:
                 try:
-                    gen = pc2.read_points(
-                        self._latest_cloud,
+                    cloud = self._latest_cloud
+                    idx = cy_px * cloud.width + cx_px
+                    points = list(pc2.read_points(
+                        cloud,
                         field_names=("x", "y", "z"),
                         skip_nans=False,
-                        uvs=[(cx_px, cy_px)],
-                    )
-                    for p in gen:
-                        x, y, z = float(p[0]), float(p[1]), float(p[2])
+                    ))
+                    if idx < len(points):
+                        x, y, z = float(points[idx][0]), float(points[idx][1]), float(points[idx][2])
                         if math.isfinite(x) and math.isfinite(y) and math.isfinite(z):
                             pos = (x, y, z)
-                        break
                 except Exception as e:
                     self.get_logger().warn(f'Point lookup error: {e}')
 
