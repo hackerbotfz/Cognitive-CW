@@ -30,12 +30,34 @@ Services
 /landmark_database/query_by_label  (std_srvs/srv/Trigger)
     Pass the desired label via the ROS parameter
     ``query_label`` before calling; returns matching landmarks as JSON.
+
+Parameters
+----------
+db_file : str
+    Path to the JSON file where the database is persisted on disk.
+    Defaults to ``~/landmark_database.json``.  The file is written (or
+    updated) once per second and again when the node shuts down, so the
+    most recent state is always available on disk.
+merge_radius : float
+    Distance threshold (metres) used to merge nearby detections of the
+    same class into a single landmark entry.  Defaults to ``1.5``.
+query_label : str
+    Label filter used by the ``/landmark_database/query_by_label`` service.
+
+File output
+-----------
+After at least one detection has been received the database is saved as a
+pretty-printed JSON array to the file named by the ``db_file`` parameter.
+Example default path::
+
+    ~/landmark_database.json   →   /home/<user>/landmark_database.json
 """
 
 import json
 import math
-import sys
 import os
+import sys
+import tempfile
 
 import rclpy
 from rclpy.node import Node
@@ -67,6 +89,8 @@ class LandmarkDatabaseNode(Node):
     _DEFAULT_CX = 320.5
     _DEFAULT_CY = 240.5
 
+    _DEFAULT_DB_FILENAME = 'landmark_database.json'
+
     def __init__(self) -> None:
         super().__init__('landmark_database_node')
 
@@ -80,6 +104,9 @@ class LandmarkDatabaseNode(Node):
 
         # ---- latest depth frame ----
         self._depth_image = None
+
+        # ---- dirty flag: True when the db has changed since last file write ----
+        self._db_dirty: bool = False
 
         if _CV_AVAILABLE:
             self._bridge = CvBridge()
@@ -143,6 +170,18 @@ class LandmarkDatabaseNode(Node):
         # ---- merge radius for landmark deduplication (metres) ----
         self.declare_parameter('merge_radius', 1.5)
 
+        # ---- output JSON file ----
+        default_db_file = os.path.join(
+            os.path.expanduser('~'), self._DEFAULT_DB_FILENAME
+        )
+        self.declare_parameter('db_file', default_db_file)
+        self._db_file: str = (
+            self.get_parameter('db_file').get_parameter_value().string_value
+        )
+        self.get_logger().info(
+            f'Landmark database will be saved to: {self._db_file}'
+        )
+
         # ---- 1 Hz publish timer ----
         self.create_timer(1.0, self._publish_state)
 
@@ -204,6 +243,7 @@ class LandmarkDatabaseNode(Node):
                 merge_radius=merge_radius,
                 attributes=attrs,
             )
+            self._db_dirty = True
             action = 'Updated' if updated else 'Added'
             self.get_logger().info(
                 f'{action} landmark {lid} ({label}) at '
@@ -251,6 +291,48 @@ class LandmarkDatabaseNode(Node):
         self._publish_markers()
         self._publish_json()
         self._publish_count()
+        self._save_to_file()
+
+    def _save_to_file(self, force: bool = False) -> None:
+        """Write the current database to *db_file* as pretty-printed JSON.
+
+        Skips the write when no changes have occurred since the last save
+        (unless *force* is ``True``).
+
+        The write is atomic: content is first flushed to a sibling temp file
+        and then renamed over the target path so readers never see a partial
+        file.
+        """
+        if not force and not self._db_dirty:
+            return
+
+        payload = [e.to_dict() for e in self.db.get_all()]
+        db_file = self._db_file
+        dir_name = os.path.dirname(db_file) or '.'
+        try:
+            os.makedirs(dir_name, exist_ok=True)
+            fd, tmp_path = tempfile.mkstemp(
+                dir=dir_name, prefix='.landmark_db_', suffix='.tmp'
+            )
+            try:
+                with os.fdopen(fd, 'w') as fh:
+                    json.dump(payload, fh, indent=2)
+                os.replace(tmp_path, db_file)
+            except Exception as exc:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+                self.get_logger().warn(
+                    f'Error while writing landmark database to {db_file}: {exc}'
+                )
+                raise
+        except OSError as exc:
+            self.get_logger().warn(
+                f'Could not write landmark database to {db_file}: {exc}'
+            )
+        else:
+            self._db_dirty = False
 
     def _publish_count(self) -> None:
         msg = Int32()
@@ -350,6 +432,10 @@ def main(args=None) -> None:
     try:
         rclpy.spin(node)
     finally:
+        node._save_to_file(force=True)
+        node.get_logger().info(
+            f'Landmark database saved to {node._db_file}'
+        )
         node.destroy_node()
         rclpy.shutdown()
 
