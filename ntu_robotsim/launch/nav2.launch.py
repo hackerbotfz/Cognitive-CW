@@ -15,11 +15,18 @@ def generate_launch_description():
 
 	nav2 = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
-			#os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py'
-			os.path.join(get_package_share_directory('yolo_bringup'), 'launch', 'yoloe.launch.py'
+			os.path.join(get_package_share_directory('nav2_bringup'), 'launch', 'navigation_launch.py'
 			)
 		),
-		launch_arguments = {'params_file': parametersFile}.items()
+		launch_arguments = {
+			'params_file': parametersFile,
+			'use_sim_time': 'true',
+			'autostart': 'true',
+			'transform_tolerance': '1.0'
+			}.items()
 	)
 
-	return LaunchDescription([parametersFileArgs, nav2])
+	return LaunchDescription([
+		parametersFileArgs,
+		nav2
+	])

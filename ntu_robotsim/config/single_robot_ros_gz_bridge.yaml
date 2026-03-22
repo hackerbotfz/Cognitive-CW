@@ -25,6 +25,12 @@
   gz_type_name: "ignition.msgs.CameraInfo"
   direction: GZ_TO_ROS
 
+- ros_topic_name: "rgbd_camera/depth_image"
+  gz_topic_name: "rgbd_camera/depth_image"
+  ros_type_name: "sensor_msgs/msg/Image"
+  gz_type_name: "ignition.msgs.Image"
+  direction: GZ_TO_ROS
+
 - ros_topic_name: "imu/data"
   gz_topic_name: "imu/data"
   ros_type_name: "sensor_msgs/msg/Imu"

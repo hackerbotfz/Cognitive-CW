@@ -1,0 +1,11 @@
+<?xml version="1.0"?>
+
+<robot name='atlas'>
+  <link name='atlas/base_link'/>
+  <link name='atlas/realsense'/>
+  <joint name='base_to_camera' type='fixed'>
+    <parent link='atlas/base_link'/>
+    <child link='atlas/realsense'/>
+    origin xyz='0.1 0 0.19' rpy='-1.5707 0 -1.5707'/>
+  </joint>
+</robot>
