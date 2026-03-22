@@ -82,6 +82,7 @@ from sensor_msgs.msg import Image, CameraInfo, PointCloud2
 import sensor_msgs_py.point_cloud2 as pc2
 from visualization_msgs.msg import Marker, MarkerArray
 from std_srvs.srv import Trigger
+from nav_msgs.msg import Odometry
 
 try:
     from cv_bridge import CvBridge, CvBridgeError
@@ -131,6 +132,10 @@ class LandmarkDatabaseNode(Node):
         self._latest_point = None
         self._latest_cloud = None
 
+        # ---- robot odometry ----
+        self._robot_position = (0.0, 0.0, 0.0)
+        self._robot_orientation = (0.0, 0.0, 0.0, 1.0)
+
         # ---- dirty flag: True when the db has changed since last file write ----
         self._db_dirty: bool = False
 
@@ -165,6 +170,12 @@ class LandmarkDatabaseNode(Node):
             CameraInfo,
             '/atlas/rgbd_camera/camera_info',
             self._on_camera_info,
+            10,
+        )
+        self.create_subscription(
+            Odometry,
+            '/atlas/odom_ground_truth',
+            self._on_odometry,
             10,
         )
 
@@ -255,6 +266,12 @@ class LandmarkDatabaseNode(Node):
     # Subscription callbacks
     # ------------------------------------------------------------------
 
+    def _on_odometry(self, msg: Odometry) -> None:
+        p = msg.pose.pose.position
+        o = msg.pose.pose.orientation
+        self._robot_position = (p.x, p.y, p.z)
+        self._robot_orientation = (o.x, o.y, o.z, o.w)
+
     def _on_camera_info(self, msg: CameraInfo) -> None:
         self._fx = msg.k[0]
         self._fy = msg.k[4]
@@ -329,18 +346,30 @@ class LandmarkDatabaseNode(Node):
                 .double_value
             )
 
-            # Skip if any landmark of this label has already been stored
-            if self.db.query_by_label(label):
-                continue
+            # Check if a landmark of this label already exists
+            existing = self.db.query_by_label(label)
+            if existing:
+                stored = existing[0]
+                stored_count = stored.attributes.get('item_count', 1)
+                new_count = label_counts.get(label, 1)
+                if new_count <= stored_count:
+                    continue
+                # New scan has higher item count — overwrite
+                self.get_logger().info(
+                    f'Updating {label}: item_count {stored_count} -> {new_count}'
+                )
 
+            px, py, pz = self._robot_position
+            ox, oy, oz, ow = self._robot_orientation
             attrs = {
                 'image_x': cx_px,
                 'image_y': cy_px,
                 'image_width': w,
                 'image_height': h,
                 'item_count': label_counts.get(label, 1),
+                'robot_position': {'x': px, 'y': py, 'z': pz},
+                'robot_orientation': {'x': ox, 'y': oy, 'z': oz, 'w': ow},
             }
-
             lid, _ = self.db.add_or_update(
                 label, x3d, y3d, z3d, confidence,
                 merge_radius=merge_radius,
@@ -435,7 +464,14 @@ class LandmarkDatabaseNode(Node):
         if not force and not self._db_dirty:
             return
 
-        payload = [e.to_dict() for e in self.db.get_all()]
+        def clean(e):
+            d = e.to_dict()
+            for key in ('confidence', 'first_seen', 'last_seen'):
+                d.pop(key, None)
+            d['robot_position'] = d.pop('position', {})
+            d.get('attributes', {}).pop('robot_position', None)
+            return d
+        payload = [clean(e) for e in self.db.get_all()]
         db_file = self._db_file
         dir_name = os.path.dirname(db_file) or '.'
         try:
