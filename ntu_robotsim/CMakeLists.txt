@@ -22,6 +22,7 @@ install(DIRECTORY
 install(PROGRAMS
   src/yolo_detector.py
   src/landmark_database_node.py
+  src/check_landmark_db.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

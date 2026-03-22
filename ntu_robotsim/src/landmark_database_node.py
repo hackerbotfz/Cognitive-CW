@@ -20,6 +20,8 @@ Publications
     Sphere + label markers for RViz (published at 1 Hz).
 /landmark_database/all  (std_msgs/String)
     JSON array of all stored landmarks (published at 1 Hz).
+/landmark_database/count  (std_msgs/Int32)
+    Number of distinct landmarks currently in the database (published at 1 Hz).
 
 Services
 --------
@@ -37,13 +39,13 @@ import os
 
 import rclpy
 from rclpy.node import Node
-from std_msgs.msg import String
+from std_msgs.msg import String, Int32
 from sensor_msgs.msg import Image, CameraInfo
 from visualization_msgs.msg import Marker, MarkerArray
 from std_srvs.srv import Trigger
 
 try:
-    from cv_bridge import CvBridge
+    from cv_bridge import CvBridge, CvBridgeError
     import numpy as np
     _CV_AVAILABLE = True
 except ImportError:
@@ -117,6 +119,11 @@ class LandmarkDatabaseNode(Node):
             '/landmark_database/all',
             10,
         )
+        self._pub_count = self.create_publisher(
+            Int32,
+            '/landmark_database/count',
+            10,
+        )
 
         # ---- services ----
         self.create_service(
@@ -158,7 +165,7 @@ class LandmarkDatabaseNode(Node):
             self._depth_image = self._bridge.imgmsg_to_cv2(
                 msg, desired_encoding='passthrough'
             )
-        except Exception as exc:
+        except CvBridgeError as exc:
             self.get_logger().warn(f'Depth image conversion error: {exc}')
 
     def _on_detections(self, msg: String) -> None:
@@ -243,6 +250,12 @@ class LandmarkDatabaseNode(Node):
     def _publish_state(self) -> None:
         self._publish_markers()
         self._publish_json()
+        self._publish_count()
+
+    def _publish_count(self) -> None:
+        msg = Int32()
+        msg.data = len(self.db)
+        self._pub_count.publish(msg)
 
     def _publish_markers(self) -> None:
         marker_array = MarkerArray()
