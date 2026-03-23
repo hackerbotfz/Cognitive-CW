@@ -11,12 +11,12 @@ def generate_launch_description():
     ros_gz_sim_share_dir = get_package_share_directory('ros_gz_sim')
 
     gz_args = os.path.join(ntu_hmrs_sim_share_dir, 'worlds', 'cwmaze', 'cwmazenew.sdf')
-    gz_args += " -v 4"
+    gz_args += " -r -v 4"
     gz_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(ros_gz_sim_share_dir, 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'gz_args': gz_args}.items(),
+        launch_arguments={'gz_args': gz_args, 'use_sim_time': 'true'}.items(),
     )
 
     return LaunchDescription([gz_sim])

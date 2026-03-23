@@ -16,6 +16,8 @@ def generate_launch_description():
             name='odom_to_tf',
             output='screen',
             parameters=[
+		{'frame_id': 'odom'},
+		{'child_frame_id': 'atlas/base_link'},
                 {'odom_topic': '/atlas/odom_ground_truth'},
                 {'use_sim_time': True},
             ],

@@ -1,10 +1,11 @@
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import IncludeLaunchDescription, RegisterEventHandler, ExecuteProcess
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch_ros.actions import Node
 from launch.substitutions import LaunchConfiguration
 from launch.actions import DeclareLaunchArgument
 from ament_index_python.packages import get_package_share_directory
+from launch.event_handlers import OnShutdown
 import os
 
 def generate_launch_description():
@@ -17,7 +18,7 @@ def generate_launch_description():
 		)
 	)
 
-	jetbot = IncludeLaunchDescription(
+	atlas = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'single_robot_sim.launch.py')
 		)
@@ -35,6 +36,12 @@ def generate_launch_description():
 		arguments = ["0", "0", "0", "0", "0", "0", "map", "odom"]
 	)
 
+	octomap = IncludeLaunchDescription(
+		PythonLaunchDescriptionSource(
+			os.path.join(ntu_sim_dir, 'launch', 'octomap.launch.py')
+		)
+	)
+
 	nav2 = IncludeLaunchDescription(
 		PythonLaunchDescriptionSource(
 			os.path.join(ntu_sim_dir, 'launch', 'nav2.launch.py')
@@ -47,11 +54,46 @@ def generate_launch_description():
 		)
 	)
 
+	teleop = Node(
+		package='teleop_twist_keyboard',
+		executable='teleop_twist_keyboard',
+		name='teleop_twist_keyboard',
+		prefix='xterm -e',
+		output='screen',
+		remappings=[('cmd_vel', '/teleop_cmd_vel')]
+	)
+
+	coursework_nodes = IncludeLaunchDescription(
+		PythonLaunchDescriptionSource(
+			os.path.join(ntu_sim_dir, 'launch', 'coursework_nodes.py')
+		)
+	)
+
+	kill_nodes = RegisterEventHandler(
+		OnShutdown(
+			on_shutdown=[
+				ExecuteProcess(
+					cmd=['pkill',
+						'-f', 'map_transformer',
+						'-f', 'goal_detector_node',
+						'-f', 'traffic_sign_navigator',
+						'-f', 'landmark_database_node',
+						'-f', 'waypoints'],
+					shell=True
+				)
+			]
+		)
+	)
+
 	return LaunchDescription([
 		maze,
-		jetbot,
+		atlas,
 		odom_to_tf,
 		map_transformer,
+		octomap,
 		nav2,
-		rviz
+		rviz,
+		teleop,
+		coursework_nodes,
+		kill_nodes
 	])
