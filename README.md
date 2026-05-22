@@ -90,7 +90,15 @@ colcon build --symlink-install
 source install/setup.bash
 ```
 
-Place trained weights at `src/ntu_robotsim/models/best.pt` (falls back to `yolov8n.pt` if missing).
+Trained weights ship as `src/ntu_robotsim/models/best.pt.gz` (Git LFS). After clone: `git lfs pull`. The detector decompresses them on first run. Without LFS or weights, it falls back to `yolov8n.pt`.
+
+To add or refresh weights from a local `best.pt`:
+
+```bash
+python scripts/compress_model.py
+git add src/ntu_robotsim/models/best.pt.gz
+git commit -m "Add trained YOLO weights"
+```
 
 ## Run
 
@@ -126,4 +134,4 @@ ros2 launch odom_to_tf_ros2 atlas_odom_to_tf.launch.py
 
 ## License
 
-© Faiz Lawan · `ntu_robotsim` components under Apache-2.0 where noted · `odom_to_tf_ros2` per package LICENSE.
+[LICENSE](LICENSE) (Apache-2.0) · [NOTICE](NOTICE) · `odom_to_tf_ros2`: [BSD 3-Clause](src/odom_to_tf_ros2/LICENSE)

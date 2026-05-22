@@ -1,0 +1,9 @@
+Cognitive-CW
+Copyright 2026 Faiz Lawan
+
+This project includes third-party components:
+
+- src/odom_to_tf_ros2 — BSD 3-Clause License (George Stavrinos, 2021).
+  See src/odom_to_tf_ros2/LICENSE.
+
+- Ultralytics YOLO — AGPL-3.0 (used at runtime via pip; see ultralytics.com).

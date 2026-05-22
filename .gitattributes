@@ -1,0 +1,2 @@
+src/ntu_robotsim/models/*.pt filter=lfs diff=lfs merge=lfs -text
+src/ntu_robotsim/models/*.pt.gz filter=lfs diff=lfs merge=lfs -text
