@@ -1,0 +1,11 @@
+build/
+install/
+log/
+.colcon/
+*.pyc
+__pycache__/
+*.py[cod]
+.idea/
+.vscode/
+*.swp
+*~
